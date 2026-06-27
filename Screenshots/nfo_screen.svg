@@ -1,0 +1,41 @@
+<svg viewBox="0 0 480 360" width="720" height="540" xmlns="http://www.w3.org/2000/svg" font-family="'DejaVu Sans Mono','Courier New',monospace">
+  <!-- NFO / device-status screen — recreated from sub_menu_nfo() LOG calls in funcs_menu.sh.
+       This is the firmware's own scrolling LOG text UI (not a framebuffer draw), so it's
+       taller than the 480x222 physical screen — it scrolls. Mockup, not a captured
+       screenshot (see README "Screenshots" note). -->
+  <rect width="480" height="360" fill="rgb(4,4,4)"/>
+  <rect x="0" y="0" width="480" height="18" fill="rgb(18,18,18)"/>
+  <text x="8" y="13" font-size="10" fill="rgb(180,180,180)">SpecPine — NFO</text>
+  <rect x="0" y="18" width="480" height="1" fill="rgb(60,60,60)"/>
+
+  <g font-size="11">
+    <text x="8" y="34"  fill="rgb(60,220,220)"> ░░░░░░░░░░░░░░░░░░░░░░░░░░</text>
+    <text x="8" y="50"  fill="rgb(230,210,40)">      S P E C P I N E</text>
+    <text x="8" y="66"  fill="rgb(60,220,220)">   RF SPECTRUM ANALYZER</text>
+    <text x="8" y="82"  fill="rgb(210,210,210)">   Hak5 Pineapple Pager</text>
+    <text x="8" y="98"  fill="rgb(230,210,40)">      v1.0 // error404</text>
+    <text x="8" y="114" fill="rgb(60,220,220)"> ░░░░░░░░░░░░░░░░░░░░░░░░░░</text>
+    <text x="8" y="130" fill="rgb(60,220,220)"> ──────────────────────────</text>
+
+    <text x="8" y="146" fill="rgb(80,140,255)">  [ HARDWARE ]</text>
+    <text x="8" y="162" fill="rgb(60,210,90)">  Wi-Spy .. ONLINE</text>
+    <text x="8" y="178" fill="rgb(210,210,210)">  Device .. Wi-Spy DBx</text>
+    <text x="8" y="194" fill="rgb(210,210,210)">  Range ... 2400-2483 MHz</text>
+    <text x="8" y="210" fill="rgb(60,220,220)"> ──────────────────────────</text>
+
+    <text x="8" y="226" fill="rgb(80,140,255)">  [ CONFIG ]</text>
+    <text x="8" y="242" fill="rgb(210,210,210)">  Stall ....... 30s</text>
+    <text x="8" y="258" fill="rgb(210,210,210)">  Restarts .... 3</text>
+    <text x="8" y="274" fill="rgb(210,210,210)">  Mute ........ off</text>
+    <text x="8" y="290" fill="rgb(210,210,210)">  No-loot ..... off</text>
+    <text x="8" y="306" fill="rgb(60,220,220)"> ──────────────────────────</text>
+
+    <text x="8" y="322" fill="rgb(230,210,40)">  [ GREETZ ]</text>
+    <text x="8" y="338" fill="rgb(210,210,210)">  :: BluePine / cncartist</text>
+    <text x="8" y="354" fill="rgb(210,210,210)">  :: spectools / caljorden</text>
+  </g>
+
+  <!-- fade hint that the log continues past the visible window -->
+  <rect x="0" y="340" width="480" height="20" fill="rgb(4,4,4)" opacity="0.0"/>
+  <text x="240" y="356" font-size="9" text-anchor="middle" fill="rgb(90,90,90)">… spectools / dragorn · hak5 community · Press OK to Return …</text>
+</svg>

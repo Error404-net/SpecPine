@@ -28,7 +28,6 @@ mcp-servers/
 
 # Dev captures and scratch
 fb_snapshot.*
-Screenshots/
 qa-results/
 testing.md
 human-notes.md
