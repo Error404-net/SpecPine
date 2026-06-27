@@ -1,0 +1,8 @@
+{
+  "started_at": "2026-06-27T14:53:04.301+00:00",
+  "source": "spectool_raw",
+  "mode": "command",
+  "input": "/root/payloads/user/reconnaissance/specpine/bin/spectool_raw --range 2",
+  "ended_at": "2026-06-27T14:56:07.398+00:00",
+  "sweep_count": 204
+}

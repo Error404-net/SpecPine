@@ -1,0 +1,12 @@
+{
+  "session_name": "session_20260627_091735_fb",
+  "ended_at": "2026-06-27T15:20:01Z",
+  "mode": "graphical",
+  "status": "success",
+  "band": "5",
+  "device": {"name": "Wi-Spy DBx3 USB 0 id 5", "id": "0", "present": true},
+  "freq_range_khz": {"start": "", "end": "", "bin_count": "", "res_hz": ""},
+  "settings": {"stall_timeout": 8, "max_restarts": 5, "mute": false, "noloot": false, "anomaly_threshold_db": 15, "anomaly_window": 10},
+  "gps": "NoGPS",
+  "app_version": "1.0 Alpha"
+}
