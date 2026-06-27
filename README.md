@@ -51,11 +51,11 @@ Works with:
  SCREENSHOTS
 ────────────────────────────────────────────────────────────────────────────
 
-![Spectrum Waterfall 2.4GHz](./screenshot_20260627_085159_1.png)
+![Spectrum Waterfall 2.4GHz]((https://raw.githubusercontent.com/Error404-net/SpecPine/refs/heads/main/specpine-Sample-loot/session_20260627_084937_fb/screenshot_20260627_085159_1.bmp))
 *2.4GHz band spectrum visualization in full swing*
 
-![Live Signal Mapping](./screenshot_20260627_085440_1.png)
-*Real-time WiFi signal strength heat map*
+![Menu](https://raw.githubusercontent.com/Error404-net/SpecPine/refs/heads/main/Screenshots/main_menu.png)
+*Main Menu
 
 
 ────────────────────────────────────────────────────────────────────────────
