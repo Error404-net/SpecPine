@@ -1,0 +1,448 @@
+# funcs_scan.sh — SpecPine scan modes
+# (sourced by payload.sh; uses globals defined there)
+
+# ── Graphical Waterfall (RGB565 framebuffer) ──────────────────────────────
+graphical_waterfall() {
+    if [ ! -e /dev/fb0 ]; then
+        ERROR_DIALOG "/dev/fb0 not available on this device."
+        show_menu_end_OK=2
+        return 1
+    fi
+    # Normalize legacy "auto" setting to a real band before starting.
+    [ "$current_band" = "auto" ] && current_band="2.4"
+    make_session_dir "${current_session_name:-fb}"
+    mark_session_started "$SESSION_DIR" "graphical"
+    show_ansi graphical_waterfall
+    LOG blue "── Graphical Waterfall ──"
+    LOG       "Display takes over. Hold OK ≥0.8s to stop."
+    # Start evtest BEFORE the bridge so the kernel's input buffer drains
+    # through evtest into KEYCKTMP_FILE first. A brief sleep lets any
+    # buffered events (e.g. BTN_SOUTH from the previous session's exit)
+    # arrive, then we wipe them so start_bridge's cancel-check only sees
+    # fresh presses from this session.
+    start_evtest
+    sleep 0.5
+    : > "$KEYCKTMP_FILE"
+    local _sb_ret
+    start_bridge "$SESSION_DIR" "$current_band"; _sb_ret=$?
+    echo "[wf] initial start_bridge ret=${_sb_ret} band=${current_band}" >> "$LOG_FILE"
+    if [ "$_sb_ret" -ne 0 ]; then
+        mark_session_failed "$SESSION_DIR" "graphical"
+        killall evtest 2>/dev/null || true
+        EVTEST_PID=""
+        LOG yellow "Session log: $SESSION_DIR"
+        show_menu_end_OK=2
+        return 1
+    fi
+    ringtone_play "GlitchHack"
+    led_safe R 0 G 255 B 0
+    LOG cyan  "Hold DOWN 2s: screenshot   Hold Back 2s: exit"
+
+    python3 "$RENDERER_FB_BIN" \
+        --events-file "$EVENTS_FILE" \
+        --follow \
+        --poll-interval 0.05 \
+        --fps 6 \
+        >> "$LOG_FILE" 2>&1 &
+    RENDERER_PID=$!
+
+    # Independent nuclear-kill watchdog: runs its OWN evtest so Back-hold
+    # always kills the waterfall even when the main shell loop is blocked.
+    # Mechanism: hold any non-d-pad, non-OK button for 2 seconds → kill -9
+    # everything. Quick taps are ignored (they're handled by the main loop).
+    local KILLWATCH_PID _wkevts="/tmp/specpine_wkevts.tmp"
+    local _wkdev="/dev/input/event0"
+    [ -e "$_wkdev" ] || _wkdev=$(ls /dev/input/event* 2>/dev/null | head -1)
+    : > "$_wkevts"
+    (
+        evtest "$_wkdev" 2>/dev/null | awk '
+            /type 1.*value 1/ && !/KEY_UP|KEY_DOWN|KEY_LEFT|KEY_RIGHT|\(BTN_EAST\)/ { print "PRESS";   fflush() }
+            /type 1.*value 0/ && !/KEY_UP|KEY_DOWN|KEY_LEFT|KEY_RIGHT|\(BTN_EAST\)/ { print "RELEASE"; fflush() }
+        ' >> "$_wkevts" &
+        _ep=$!
+        _rp="$RENDERER_PID"
+        _press_t=0
+        while kill -0 "$_rp" 2>/dev/null; do
+            if [ -s "$_wkevts" ]; then
+                _evts=$(cat "$_wkevts"); : > "$_wkevts"
+                case "$_evts" in
+                    *PRESS*RELEASE*|*RELEASE*) _press_t=0 ;;  # quick tap / release → reset
+                    *PRESS*)
+                        [ "$_press_t" -eq 0 ] && _press_t=$(date +%s)
+                        ;;
+                esac
+            fi
+            if [ "$_press_t" -gt 0 ] && [ $(( $(date +%s) - _press_t )) -ge 2 ]; then
+                echo "[watchdog] Back held 2s -- nuking specpine" >> "$LOG_FILE"
+                kill -9 "$_rp" 2>/dev/null || true
+                pkill -9 -f spectools_waterfall 2>/dev/null || true
+                pkill -9 -f spectools_bridge    2>/dev/null || true
+                pkill -9 -f spectool_raw        2>/dev/null || true
+                _pp=$(pidof pineapple 2>/dev/null | awk '{print $1}')
+                [ -n "$_pp" ] && kill -CONT "$_pp" 2>/dev/null || true
+                break
+            fi
+            sleep 0.3
+        done
+        kill "$_ep" 2>/dev/null || true
+        rm -f "$_wkevts"
+    ) &
+    KILLWATCH_PID=$!
+
+    clear_dpad_evt
+    clear_screenshot_evt
+    local shot_n=0 _down_hold_start="" _last_shot_t=0
+
+    # Stall watchdog: if EVENTS_FILE stops growing (bridge died, USB hiccup,
+    # device went unresponsive mid-sweep) the renderer just sits there idle
+    # forever with pineapple still SIGSTOPped -- a silent, total UI freeze
+    # indistinguishable from a crash. Detect via file size, not wall clock,
+    # so a slow-but-alive feed never false-trips this.
+    local last_evt_size=-1 last_evt_growth stall_limit
+    last_evt_growth=$(date +%s)
+    stall_limit=$(( stall_timeout * 3 ))
+    [ "$stall_limit" -lt 15 ] && stall_limit=15
+
+    local _tick=0
+    while kill -0 "$RENDERER_PID" 2>/dev/null; do
+        _tick=$((_tick + 1))
+        if [ $((_tick % 20)) -eq 1 ]; then
+            local _ks _es
+            _ks=$(wc -c < "$KEYCKTMP_FILE" 2>/dev/null || echo -1)
+            _es="dead"; kill -0 "${EVTEST_PID:-}" 2>/dev/null && _es="alive"
+            echo "[wf t${_tick}] evtest=${_es} keyck=${_ks}B btn=$(cat "$BTN_EVT_FILE" 2>/dev/null) dpad=$(cat "$DPAD_EVT_FILE" 2>/dev/null)" >> "$LOG_FILE"
+            [ "${_ks:-0}" -gt 0 ] && tail -2 "$KEYCKTMP_FILE" 2>/dev/null >> "$LOG_FILE"
+        fi
+        check_dpad
+        check_cancel
+        if is_btn_stopped; then
+            echo "[wf] stop -- force-killing renderer" >> "$LOG_FILE"
+            kill    "$RENDERER_PID" 2>/dev/null || true
+            kill -9 "$RENDERER_PID" 2>/dev/null || true
+            kill_stray_specpine_workers
+            pineapple_ensure_running
+            break
+        fi
+
+        local cur_evt_size
+        cur_evt_size=$(wc -c < "$EVENTS_FILE" 2>/dev/null || echo -1)
+        if [ "$cur_evt_size" != "$last_evt_size" ]; then
+            last_evt_size="$cur_evt_size"
+            last_evt_growth=$(date +%s)
+        elif [ $(( $(date +%s) - last_evt_growth )) -ge "$stall_limit" ]; then
+            LOG red "Feed stalled (${stall_limit}s no data) -- recovering"
+            stop_bridge
+            local _sb_stall_ret
+            start_bridge "$SESSION_DIR" "$current_band" "$RENDERER_PID"; _sb_stall_ret=$?
+            if [ "$_sb_stall_ret" -eq 2 ]; then
+                echo "[wf] stall recovery cancelled by user" >> "$LOG_FILE"
+                echo "stop" > "$BTN_EVT_FILE"
+                kill "$RENDERER_PID" 2>/dev/null || true
+                break
+            elif [ "$_sb_stall_ret" -eq 0 ]; then
+                kill -USR1 "$RENDERER_PID" 2>/dev/null || true
+                LOG yellow "Feed restarted: ${current_band} GHz"
+                last_evt_size=-1
+                last_evt_growth=$(date +%s)
+            else
+                LOG red "Feed recovery failed -- stopping scan: ${BRIDGE_FAIL_REASON:-unknown}"
+                kill "$RENDERER_PID" 2>/dev/null || true
+                break
+            fi
+        fi
+
+        if [ -s "$DPAD_PENDING_FILE" ]; then
+            _down_hold_start=$(cat "$DPAD_PENDING_FILE" 2>/dev/null)
+            local _now; _now=$(date +%s)
+            if [ -n "$_down_hold_start" ] && [ $(( _now - _down_hold_start )) -ge 2 ]; then
+                : > "$DPAD_PENDING_FILE"
+                # ponytail: 3s cooldown stops evtest autorepeat DOWN events from
+                # immediately re-arming DPAD_PENDING_FILE and looping screenshots.
+                if [ $(( _now - _last_shot_t )) -ge 3 ]; then
+                    _last_shot_t="$_now"
+                    shot_n=$((shot_n+1))
+                    local shot_path="${SESSION_DIR}/screenshot_$(date +%Y%m%d_%H%M%S)_${shot_n}.bmp"
+                    echo "[wf] screenshot triggered (DOWN held 2s)" >> "$LOG_FILE"
+                    local _shot_ok=0
+                    python3 "$FB_SCREENSHOT_BIN" "$shot_path" >> "$LOG_FILE" 2>&1 && _shot_ok=1
+                    kill -STOP "$RENDERER_PID" 2>/dev/null || true
+                    local _pp; _pp=$(pidof pineapple 2>/dev/null | awk '{print $1}')
+                    [ -n "$_pp" ] && kill -CONT "$_pp" 2>/dev/null || true
+                    sleep 0.15
+                    if [ "$_shot_ok" -eq 1 ]; then
+                        echo "[wf] screenshot ok: ${shot_path##*/}" >> "$LOG_FILE"
+                        LOG green "SCREENSHOT: ${shot_path##*/}"
+                        [ "$mute" = "false" ] && RINGTONE "Achievement" 2>/dev/null || true
+                        sleep 1.5
+                    else
+                        LOG red "Screenshot failed"
+                        sleep 0.3
+                    fi
+                    [ -n "$_pp" ] && kill -STOP "$_pp" 2>/dev/null || true
+                    kill -CONT "$RENDERER_PID" 2>/dev/null || true
+                fi
+            fi
+        fi
+
+        sleep 0.15
+    done
+    wait "$RENDERER_PID" 2>/dev/null
+    RENDERER_PID=""
+    pineapple_ensure_running   # belt-and-suspenders: renderer's own SIGCONT may not have fired
+
+    stop_bridge
+    kill "$KILLWATCH_PID" 2>/dev/null || true
+    wait "$KILLWATCH_PID" 2>/dev/null || true
+    rm -f /tmp/specpine_wkevts.tmp
+    killall evtest 2>/dev/null || true
+    EVTEST_PID=""
+    clear_btn_evt
+    clear_dpad_evt
+    clear_screenshot_evt
+
+    if [ "$current_save_loot" = "true" ] && [ -f "$EVENTS_FILE" ]; then
+        cp "$EVENTS_FILE" "${SESSION_DIR}/events.jsonl" 2>/dev/null || true
+    fi
+    mark_session_success "$SESSION_DIR" "graphical"
+    led_safe R 0 G 0 B 128
+    LOG green "Graphical waterfall stopped"
+    total_scans=$((total_scans+1))
+    show_menu_end_OK=2
+}
+
+# ── Channel Analysis (Wi-Fi 2.4 / 5 GHz utilization) ──────────────────────
+channel_analysis() {
+    make_session_dir "${current_session_name:-channel}"
+    mark_session_started "$SESSION_DIR" "channel"
+    show_ansi channel_analysis
+    LOG blue "── Channel Analysis ──"
+    local dur
+    dur=$(NUMBER_PICKER "Capture duration (s)" "10")
+    [ -z "$dur" ] && dur=10
+    LOG       "Capturing ${dur} seconds for band: ${current_band}"
+
+    if ! start_bridge "$SESSION_DIR"; then
+        mark_session_failed "$SESSION_DIR" "channel"
+        LOG yellow "Session log: $SESSION_DIR"
+        show_menu_end_OK=2
+        return 1
+    fi
+    start_evtest
+    ringtone_play "GlitchHack"
+    led_safe R 0 G 0 B 255
+
+    local deadline=$(( $(date +%s) + dur ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        check_cancel
+        if is_btn_stopped; then break; fi
+        sleep 0.5
+    done
+    stop_bridge
+    killall evtest 2>/dev/null || true
+    EVTEST_PID=""
+    clear_btn_evt
+
+    LOG       "Computing channel utilization..."
+
+    SPECPINE_EVENTS="$EVENTS_FILE" \
+    SPECPINE_BAND="$current_band" \
+    SPECPINE_OUT="${SESSION_DIR}/channel_report.txt" \
+    python3 - <<'PYEOF' >/dev/null 2>&1
+import os, json
+from collections import defaultdict
+
+EVENTS = os.environ["SPECPINE_EVENTS"]
+BAND   = os.environ["SPECPINE_BAND"]
+OUT    = os.environ["SPECPINE_OUT"]
+THR    = -75.0   # dBm threshold for "busy"
+
+ch24 = [(n, 2412 + (n-1)*5) for n in range(1, 12)]
+ch5  = [(n, 5000 + n*5) for n in range(36, 166, 4)]
+
+if BAND == "2.4":
+    channels = ch24
+elif BAND == "5":
+    channels = ch5
+else:
+    channels = ch24 + ch5
+
+cfg = None
+sweeps = []
+try:
+    with open(EVENTS) as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            if e.get("type") == "device_config" and cfg is None:
+                cfg = e
+            elif e.get("type") == "sweep":
+                sweeps.append(e)
+except FileNotFoundError:
+    pass
+
+with open(OUT, "w") as out:
+    if not cfg or not sweeps:
+        out.write("No data captured\n")
+    else:
+        fs = float(cfg.get("freq_start_khz", 0))
+        fe = float(cfg.get("freq_end_khz",   0))
+        nb = int(cfg.get("bin_count", 1))
+        if nb < 1 or fe <= fs:
+            out.write("Bad device_config\n")
+        else:
+            step = (fe - fs) / nb
+            stats = defaultdict(lambda: {"sum":0.0, "n":0, "max":-200.0, "busy":0})
+            n_sweeps = len(sweeps)
+            for sw in sweeps:
+                bins = sw.get("rssi_bins") or []
+                if not bins:
+                    continue
+                for ch_num, ch_mhz in channels:
+                    centre_khz = ch_mhz * 1000
+                    if centre_khz < fs or centre_khz > fe:
+                        continue
+                    idx = int((centre_khz - fs) / step)
+                    if 0 <= idx < len(bins):
+                        v = float(bins[idx])
+                        s = stats[ch_num]
+                        s["sum"] += v
+                        s["n"]   += 1
+                        if v > s["max"]: s["max"] = v
+                        if v > THR:      s["busy"] += 1
+            rows = []
+            for ch_num, _ in channels:
+                s = stats[ch_num]
+                if s["n"] == 0: continue
+                avg  = s["sum"] / s["n"]
+                util = 100.0 * s["busy"] / max(1, n_sweeps)
+                rows.append((ch_num, avg, s["max"], util))
+            rows.sort(key=lambda r: r[3], reverse=True)
+            out.write(f"# Channels for band={BAND}, sweeps={n_sweeps}\n")
+            out.write(f"{'Ch':>4} {'avg':>7} {'max':>7} {'util%':>7}\n")
+            for ch, avg, mx, util in rows:
+                out.write(f"{ch:>4} {avg:>7.1f} {mx:>7.1f} {util:>7.1f}\n")
+PYEOF
+
+    if [ -s "${SESSION_DIR}/channel_report.txt" ]; then
+        while IFS= read -r row; do LOG green "$row"; done < "${SESSION_DIR}/channel_report.txt"
+    else
+        LOG yellow "No channels in band, or capture empty"
+    fi
+
+    if [ "$current_save_loot" = "true" ] && [ -f "$EVENTS_FILE" ]; then
+        cp "$EVENTS_FILE" "${SESSION_DIR}/events.jsonl" 2>/dev/null || true
+    fi
+    mark_session_success "$SESSION_DIR" "channel"
+    led_safe R 0 G 0 B 128
+    ringtone_play "ScaleTrill"
+    total_scans=$((total_scans+1))
+    show_menu_end_OK=2
+}
+
+# ── Anomaly / Jammer Detection ────────────────────────────────────────────
+anomaly_detection() {
+    make_session_dir "${current_session_name:-anomaly}"
+    mark_session_started "$SESSION_DIR" "anomaly"
+    show_ansi anomaly
+    LOG blue "── Anomaly Detection ──"
+    LOG       "Watching for sudden RSSI spikes (Δ > ${anomaly_threshold_db} dB)"
+    if ! start_bridge "$SESSION_DIR"; then
+        mark_session_failed "$SESSION_DIR" "anomaly"
+        LOG yellow "Session log: $SESSION_DIR"
+        show_menu_end_OK=2
+        return 1
+    fi
+    start_evtest
+    ringtone_play "GlitchHack"
+    led_safe R 0 G 255 B 255
+    LOG green "Hold OK ≥0.8s to stop"
+    LOG       "_____________________________________________"
+
+    export SPECPINE_EVENTS="$EVENTS_FILE"
+    export SPECPINE_BTN="$BTN_EVT_FILE"
+    export SPECPINE_THR="$anomaly_threshold_db"
+    export SPECPINE_WIN="$anomaly_window"
+
+    while IFS= read -r line; do
+        if [ "${line:0:7}" = "ANOMALY" ]; then
+            led_safe R 255 G 0 B 0
+            ringtone_play "Warning"
+            LOG red "$line"
+            echo "$line" >> "${SESSION_DIR}/anomaly_log.txt"
+            local g
+            g=$(gps_get_wrapper)
+            echo "  gps=${g}" >> "${SESSION_DIR}/anomaly_log.txt"
+            total_anomalies=$((total_anomalies+1))
+            sleep 0.5
+            led_safe R 0 G 255 B 255
+        fi
+        check_cancel
+        if is_btn_stopped; then break; fi
+    done < <(python3 - <<'PYEOF'
+import os, json, time, sys, collections
+EVENTS = os.environ["SPECPINE_EVENTS"]
+BTN    = os.environ["SPECPINE_BTN"]
+THR    = float(os.environ.get("SPECPINE_THR", "15"))
+WIN    = int(os.environ.get("SPECPINE_WIN", "10"))
+
+baseline = collections.deque(maxlen=WIN)
+try:
+    fh = open(EVENTS, "r")
+except FileNotFoundError:
+    sys.exit(0)
+fh.seek(0, 2)
+while True:
+    if os.path.exists(BTN):
+        try:
+            v = open(BTN).read().strip()
+            if v == "stop":
+                break
+        except Exception:
+            pass
+    line = fh.readline()
+    if not line:
+        time.sleep(0.05)
+        continue
+    try:
+        e = json.loads(line)
+    except Exception:
+        continue
+    if e.get("type") != "sweep":
+        continue
+    stats = e.get("stats") or {}
+    mx = stats.get("max")
+    if mx is None:
+        continue
+    if len(baseline) == WIN:
+        avg = sum(baseline) / WIN
+        delta = float(mx) - avg
+        if delta >= THR:
+            ts = e.get("timestamp", "")
+            print(f"ANOMALY {ts} max={mx} baseline={avg:.1f} delta={delta:.1f}", flush=True)
+    baseline.append(float(mx))
+PYEOF
+)
+
+    stop_bridge
+    killall evtest 2>/dev/null || true
+    EVTEST_PID=""
+    clear_btn_evt
+
+    if [ "$current_save_loot" = "true" ] && [ -f "$EVENTS_FILE" ]; then
+        cp "$EVENTS_FILE" "${SESSION_DIR}/events.jsonl" 2>/dev/null || true
+    fi
+    mark_session_success "$SESSION_DIR" "anomaly"
+    LOG       "──────────────────────────────────────────"
+    if [ -f "${SESSION_DIR}/anomaly_log.txt" ]; then
+        local hits
+        hits=$(grep -c '^ANOMALY' "${SESSION_DIR}/anomaly_log.txt")
+        LOG green "Anomalies in this session: ${hits}"
+    else
+        LOG green "No anomalies detected"
+    fi
+    led_safe R 0 G 0 B 128
+    total_scans=$((total_scans+1))
+    show_menu_end_OK=2
+}

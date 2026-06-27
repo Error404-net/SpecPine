@@ -1,0 +1,34 @@
+# C build artifacts (spectool sourcecode/ only — not the pre-compiled MIPS drop)
+*.o
+spectool_gtk
+spectool_curses
+/spectool sourcecode/spectool_raw
+/spectool sourcecode/spectool_net
+# Pre-compiled MIPS binaries in spectools-pineapple-build/ ARE tracked
+!spectools-pineapple-build/bin/spectool_raw
+!spectools-pineapple-build/bin/spectool_net
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs — CI produces pine-spectools.zip as a release artifact
+dist/
+pine-spectools.zip
+pine-spectools.zip.tmp.*
+*.zip.tmp.*
+
+# Dev-only tools (credentials; not for public consumption)
+mcp-servers/
+.claude/
+
+# Dev captures and scratch
+fb_snapshot.*
+Screenshots/
+qa-results/
+testing.md
+human-notes.md
